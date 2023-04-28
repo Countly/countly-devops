@@ -1,4 +1,4 @@
-MONGO_USER=$(grep mongo /etc/passwd | tail -n 1 | awk -F':' '{print $1}')
+MONGO_USER=$(grep mongo /etc/passwd | head -1 | awk -F':' '{print $1}')
 
 printf "o\nn\np\n1\n\n\nw\n" | sudo fdisk /dev/sdb
 
