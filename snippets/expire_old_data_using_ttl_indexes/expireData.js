@@ -1,5 +1,5 @@
 //run on mongodb server as
-//mongo < expireData.js
+//mongosh --file expireData.js
 
 var COUNTLY_DRILL = 'countly_drill',
     COUNTLY = 'countly',
