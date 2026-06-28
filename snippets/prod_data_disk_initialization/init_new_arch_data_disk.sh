@@ -148,22 +148,18 @@ format_and_mount() {
   # Create the mount point folder if it doesn't exist
   mkdir -p "$mountpoint"
 
-  # Read the disk's UUID — a permanent identifier baked into the filesystem.
-  # fstab entries use UUID instead of /dev/sdX because:
-  #   - /dev/sdX letters can change when disks are reattached
-  #   - UUID stays the same even after detach/reattach or snapshot restore
-  local uuid
-  uuid=$(blkid -o value -s UUID "$device")
-  [[ -n "$uuid" ]] || die "Could not read UUID from $device. The disk may not have been formatted correctly."
-
-  # Add fstab entry only if this UUID isn't already recorded
-  # fstab is what makes the mount persist across reboots
-  if ! grep -q "UUID=${uuid}" /etc/fstab; then
-    # Fields: UUID  mountpoint  filesystem  options  dump  fsck-pass
+  # Use the stable GCP device-name symlink in fstab instead of UUID.
+  # UUID changes whenever a disk is replaced from snapshot (DR / migration),
+  # causing fstab to silently skip the mount on reboot (nofail hides the error).
+  # /dev/disk/by-id/google-<device-name> is stable as long as the disk is
+  # always attached with the same GCP device-name — which the ignite script
+  # enforces (device-name=mongodb-data / clickhouse-data / kafka-data).
+  if ! grep -q "${mountpoint}" /etc/fstab; then
+    # Fields: device  mountpoint  filesystem  options  dump  fsck-pass
     # dump=0:      disable legacy dump backups (not used)
     # fsck-pass=0: skip fsck at boot — XFS uses its own journal replay
-    echo "UUID=${uuid} ${mountpoint} ${FS_TYPE} ${MOUNT_OPTS} 0 0" >> /etc/fstab
-    log "Added $mountpoint to /etc/fstab."
+    echo "${device} ${mountpoint} ${FS_TYPE} ${MOUNT_OPTS} 0 0" >> /etc/fstab
+    log "Added $mountpoint to /etc/fstab (via $device)."
   fi
 
   # Mount the disk now (fstab will handle future reboots automatically)
