@@ -65,9 +65,7 @@ FS_TYPE="xfs"
 #   defaults    — standard read/write mount with sensible defaults
 #   noatime     — don't update file access timestamps on every read
 #                 (reduces unnecessary disk writes, improves performance)
-#   nofail      — if this disk is missing at boot, the instance still starts
-#                 normally instead of dropping into emergency shell
-MOUNT_OPTS="defaults,noatime,nofail"
+MOUNT_OPTS="defaults,noatime"
 
 # Directories that need explicit ownership set before the container starts.
 #
@@ -189,6 +187,34 @@ set_ownership() {
 }
 
 # -----------------------------------------------------------------------------
+# FUNCTION: create_docker_dropin
+# -----------------------------------------------------------------------------
+# Creates a systemd drop-in that makes docker.service wait for all data disk
+# mount units before starting. Without this, Docker restarts on reboot before
+# disks are mounted and containers write to the root disk instead of their
+# dedicated data disks.
+#
+# Mount unit names are derived from mount points using systemd-escape, matching
+# what systemd generates automatically from /etc/fstab entries.
+# -----------------------------------------------------------------------------
+create_docker_dropin() {
+  local units=()
+  for device in "${!DISKS[@]}"; do
+    local mp="${DISKS[$device]}"
+    units+=("$(systemd-escape --path "$mp").mount")
+  done
+  local unit_list="${units[*]}"
+
+  mkdir -p /etc/systemd/system/docker.service.d
+  cat > /etc/systemd/system/docker.service.d/wait-mounts.conf << EOF
+[Unit]
+After=${unit_list}
+Requires=${unit_list}
+EOF
+  log "Created Docker systemd drop-in: Docker will wait for ${unit_list}."
+}
+
+# -----------------------------------------------------------------------------
 # FUNCTION: verify_mounts
 # -----------------------------------------------------------------------------
 # Runs after all disks are processed to confirm every expected mount point
@@ -225,8 +251,10 @@ main() {
     fi
   done
 
-  # Tell systemd to re-read unit files — picks up any new fstab-generated
-  # mount units without requiring a reboot
+  create_docker_dropin
+
+  # Tell systemd to re-read unit files — picks up new fstab mount units
+  # and the Docker drop-in created above
   systemctl daemon-reload
 
   verify_mounts
