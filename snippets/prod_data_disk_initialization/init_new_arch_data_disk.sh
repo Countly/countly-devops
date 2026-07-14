@@ -65,7 +65,7 @@ FS_TYPE="xfs"
 #   defaults    — standard read/write mount with sensible defaults
 #   noatime     — don't update file access timestamps on every read
 #                 (reduces unnecessary disk writes, improves performance)
-MOUNT_OPTS="defaults,noatime"
+MOUNT_OPTS="defaults,noatime,nofail"
 
 # Directories that need explicit ownership set before the container starts.
 #
