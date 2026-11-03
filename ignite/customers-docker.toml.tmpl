@@ -1,0 +1,90 @@
+# @NAME@ -- created by countly_ignite_komodo on @DATE@ (run by @OPERATOR@).
+# GCE `@VM@` (project @PROJECT@, @ZONE@, @MACHINE_TYPE@). Data on separate disks:
+# @DATA_DIRS@.
+#
+# Layout, everything Countly-related under /opt:
+#   /opt/komodo/        Periphery root: keys/, stacks/@NAME@/compose (the release)
+#   /opt/countly-2601/  customer files = COUNTLY_CUSTOMER_DIR (.env, ssl/, vhosts/, clickhouse/)
+#                       and scripts/check-data-mounts.sh (docker.service ExecStartPre guard)
+#
+# Lane @LANE@, pinned to @COMMIT_SHORT@ (release @RELEASE@). Upgrade = bump `commit` here,
+# merge, then Deploy. Registry pulls use the VM's service account (gcloud credHelper), so no
+# registry_account.
+#
+# Old dashboard only (COUNTLY_UI_MODE=disabled, the default): "countly-ui" stays in
+# ignore_services.
+#
+# No `auto-deploy` tag: a human presses Deploy. Never tag a Stack `gitops-root`.
+
+[[server]]
+name = "@NAME@"
+description = "@NAME@ (@VM@, @PROJECT@, @MACHINE_TYPE@). Outbound periphery, project countly."
+tags = ["compose", "prod-customer"]
+
+[server.config]
+address = "" # Periphery -> Core (outbound from the box)
+region = "@REGION@"
+# true: countly_ignite_komodo onboarded the box before opening this PR.
+enabled = true
+# Said explicitly: a sync resets an omitted field to its default (a daily `docker image prune -a -f`).
+auto_prune = false
+
+[[stack]]
+name = "@NAME@"
+description = "@NAME@: compose-release lane @LANE@ pinned to @RELEASE@, tier @TIER@, old dashboard. Manual Deploy only."
+tags = ["compose", "prod-customer"]
+deploy = false
+
+[stack.config]
+server = "@NAME@"
+
+project_name = "countly"
+destroy_before_deploy = false
+
+repo = "Countly/compose-release"
+branch = "@LANE@"
+commit = "@COMMIT@" # release @RELEASE@
+git_provider = "github.com"
+git_account = "countly-gitops-bot"
+
+run_directory = "compose"
+# pre-install refuses before anything is touched; post-install verifies after. Same tier as additional_env_files.
+# `timeout`: Komodo has none on hooks.
+# COUNTLY_CUSTOMER_DIR: customer files live in /opt/countly-2601, not the /etc/countly default.
+pre_deploy  = { path = ".", command = "COUNTLY_CUSTOMER_DIR=/opt/countly-2601 timeout -k 60 1800 bash scripts/pre-install.sh --tier @TIER@" }
+post_deploy = { path = ".", command = "COUNTLY_CUSTOMER_DIR=/opt/countly-2601 timeout -k 60 900 bash scripts/post-install.sh" }
+file_paths = ["compose.yaml"]
+config_files = [{ path = "BUNDLE.json", requires = "Redeploy" }]
+
+# ENV ORDER: datastore digests, sizing, the box's customer .env (track = false: never
+# shown in the UI), then the lane's app image last.
+additional_env_files = [
+  "images.standard.env",
+  "tiers/@TIER@.env",
+  { path = "/opt/countly-2601/.env", track = false },
+  "images.app.env",
+]
+env_file_path = ".komodo.env"
+# A fresh server takes the release's datastore versions: no pins. To hold one back on a
+# later upgrade, pin it here (e.g. MONGODB_IMAGE=...), one line per Deploy.
+environment = ""
+
+extra_args = []
+# ui: off -- COUNTLY_UI_MODE=disabled, so countly-ui has no container: keep it here.
+ignore_services = [
+  "mount-check",
+  "clickhouse-data-owner",
+  "clickhouse-client-check",
+  "mongodb-init",
+  "clickhouse-init",
+  "kafka-init",
+  "connector-init",
+  "certbot",
+  "cert-generator",
+  "migration",
+  "countly-ui",
+]
+auto_update = false
+poll_for_updates = false
+webhook_enabled = false
+send_alerts = true
