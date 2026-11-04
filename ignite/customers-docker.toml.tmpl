@@ -11,8 +11,8 @@
 # merge, then Deploy. Registry pulls use the VM's service account (gcloud credHelper), so no
 # registry_account.
 #
-# Old dashboard only (COUNTLY_UI_MODE=disabled, the default): "countly-ui" stays in
-# ignore_services.
+# Dashboard: COUNTLY_UI_MODE in the customer .env, as the release seeds it (26.10: disabled,
+# 27.0: combined). "countly-ui" stays in ignore_services: it runs only in subdomain/primary mode.
 #
 # No `auto-deploy` tag: a human presses Deploy. Never tag a Stack `gitops-root`.
 
@@ -31,7 +31,7 @@ auto_prune = false
 
 [[stack]]
 name = "@NAME@"
-description = "@NAME@: compose-release lane @LANE@ pinned to @RELEASE@, tier @TIER@, old dashboard. Manual Deploy only."
+description = "@NAME@: compose-release lane @LANE@ pinned to @RELEASE@, tier @TIER@. Manual Deploy only."
 tags = ["compose", "prod-customer"]
 deploy = false
 
@@ -70,7 +70,7 @@ env_file_path = ".komodo.env"
 environment = ""
 
 extra_args = []
-# ui: off -- COUNTLY_UI_MODE=disabled, so countly-ui has no container: keep it here.
+# countly-ui has a container only in subdomain/primary mode: keep it here otherwise.
 ignore_services = [
   "mount-check",
   "clickhouse-data-owner",

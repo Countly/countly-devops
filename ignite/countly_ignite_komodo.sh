@@ -101,7 +101,7 @@ load_secrets() {
 # --- State file (no secrets) -------------------------------------------------
 STATE_VARS=(CUSTOMER_NAME CUSTOMER_TYPE PROJECT REGION ZONE MACHINE_NAME MACHINE_TYPE TIER TIER_LOWER
   DATA_DISK_SIZE MONGODB_DIRECTORYPERDB MONGODB_WIREDTIGER_DIRECTORY_FOR_INDEXES ENABLE_OBS
-  FLAVOR LANE COMMIT RELEASE VERSION_LABEL IMAGE LE_DOMAIN LE_EMAIL API_TRAFFIC_ACCESS
+  FLAVOR LANE RELEASE_TAG COMMIT RELEASE VERSION_LABEL IMAGE LE_DOMAIN LE_EMAIL API_TRAFFIC_ACCESS
   LE_API_TRAFFIC_ACCESS API_ROOT_REDIRECT LE_ROOT_REDIRECT CLY_INIT_USER_UID INSTANCE_ENV DATA_CLASS
   CUSTOMER_IP CF_ZONE_ID CF_RECORD_IDS KOMODO_SERVER_ID PR_URL OPERATOR STARTED DONE)
 
@@ -278,6 +278,16 @@ else
     *) FLAVOR=standard; LANE=main-release ;;
   esac
 
+  # A tag pins a release that is not (or not yet) a lane head, e.g. a release candidate. Its
+  # BUNDLE.json names the lane; the Stack tracks that branch, pinned to the tag's commit.
+  askQ "Release?" "latest on ${LANE} [default]" "a release tag (e.g. 27.0.0-rc1)"
+  read -r -p "    #: " a; RELEASE_TAG=
+  if [ "${a:0:1}" = 2 ]; then
+    read -r -p "  Tag (without the flavor suffix): " RELEASE_TAG
+    [[ "$RELEASE_TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+[0-9a-z.-]*$ ]] || die "not a release tag: $RELEASE_TAG"
+    [ "$FLAVOR" = standard ] || RELEASE_TAG="${RELEASE_TAG}-${FLAVOR}"
+  fi
+
   echo ""
   echo "  TLS: ${CUSTOMER_NAME}.count.ly uses the company wildcard cert. Optionally a second domain via Let's Encrypt."
   read -r -p "  Custom domain for Let's Encrypt [blank = none]: " LE_DOMAIN
@@ -325,10 +335,18 @@ CF_ZONE_ID="$(cf GET "/zones?name=${CF_ZONE_NAME}" | jq -r '.result[0].id // emp
 [ -n "$CF_ZONE_ID" ] || die "Cloudflare token cannot see zone ${CF_ZONE_NAME}"
 
 if [ "$MODE" = new ]; then
-  head_json="$(gh GET "/repos/${RELEASE_REPO}/commits/${LANE}")" || die "cannot read lane $LANE of $RELEASE_REPO"
-  COMMIT="$(jq -r .sha <<<"$head_json")"
+  if [ -n "$RELEASE_TAG" ]; then
+    head_json="$(gh GET "/repos/${RELEASE_REPO}/commits/${RELEASE_TAG}")" || die "no tag $RELEASE_TAG in $RELEASE_REPO"
+    COMMIT="$(jq -r .sha <<<"$head_json")"
+    LANE="$(gh GET "/repos/${RELEASE_REPO}/contents/compose/BUNDLE.json?ref=${COMMIT}" | jq -r .content | base64 -d | jq -r '.lane // empty')"
+    [ -n "$LANE" ] || die "tag $RELEASE_TAG has no lane in compose/BUNDLE.json"
+    gh GET "/repos/${RELEASE_REPO}/git/ref/heads/${LANE}" >/dev/null || die "tag $RELEASE_TAG names lane $LANE, which is not a branch"
+  else
+    head_json="$(gh GET "/repos/${RELEASE_REPO}/commits/${LANE}")" || die "cannot read lane $LANE of $RELEASE_REPO"
+    COMMIT="$(jq -r .sha <<<"$head_json")"
+  fi
   RELEASE="$(jq -r '.commit.message | split("\n")[0]' <<<"$head_json" | sed -nE 's/^release ([0-9][0-9.]*[0-9a-z.-]*).*/\1/p')"
-  [ -n "$RELEASE" ] || die "lane $LANE head ${COMMIT:0:7} is not a release commit ('release X.Y.Z')"
+  [ -n "$RELEASE" ] || die "${RELEASE_TAG:-lane $LANE head} ${COMMIT:0:7} is not a release commit ('release X.Y.Z')"
   IFS=. read -r r1 r2 r3 _ <<<"${RELEASE%%-*}"
   VERSION_LABEL="$(printf 'v%02d%02d%02d' "$((10#$r1))" "$((10#$r2))" "$((10#${r3:-0}))")"
 
