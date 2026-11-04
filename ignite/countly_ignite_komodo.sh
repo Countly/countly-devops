@@ -162,6 +162,9 @@ render_overrides() {
   [ -n "$MONGODB_DIRECTORYPERDB" ] && echo "MONGODB_DIRECTORYPERDB=true"
   [ -n "$MONGODB_WIREDTIGER_DIRECTORY_FOR_INDEXES" ] && echo "MONGODB_WIREDTIGER_DIRECTORY_FOR_INDEXES=true"
   if [ -n "$LE_DOMAIN" ]; then echo "LE_DOMAIN=$LE_DOMAIN"; echo "LE_EMAIL=$LE_EMAIL"; fi
+  # 27.0 seeds COUNTLY_UI_MODE=combined, and bin/ui-mode.sh derives the dashboard origin from
+  # LE_DOMAIN only: without one it stays empty, so name the company domain.
+  [ -n "$LE_DOMAIN" ] || echo "COUNTLY_UI_PUBLIC_URL=https://${CUSTOMER_NAME}.${CF_ZONE_NAME}"
   echo "API_TRAFFIC_ACCESS=$API_TRAFFIC_ACCESS"
   echo "LE_API_TRAFFIC_ACCESS=$LE_API_TRAFFIC_ACCESS"
   [ -n "$API_ROOT_REDIRECT" ] && echo "API_ROOT_REDIRECT=$API_ROOT_REDIRECT"
