@@ -38,7 +38,7 @@ clean_root() {
 }
 
 build() {
-  log "1/7 Remove the legacy tree, the GCR key, saved registry logins and root's leftovers"
+  log "1/8 Remove the legacy tree, the GCR key, saved registry logins and root's leftovers"
   # The legacy dockerized_deploy tree lives in /opt/countly too: removed here, rebuilt empty in step 3.
   systemctl stop docker.socket docker
   rm -rf /opt/countly /opt/gcr-key.json
@@ -49,7 +49,7 @@ build() {
 
   # compose-release is private and the VM holds no GitHub credential: the builder copies
   # `git archive <commit> compose` here as /tmp/bundle.tar, and its commit is checked.
-  log "2/7 Unpack the bundle at ${BUNDLE_COMMIT:0:7}"
+  log "2/8 Unpack the bundle at ${BUNDLE_COMMIT:0:7}"
   [ -f /tmp/bundle.tar ] || fail "copy the bundle first: git archive --format=tar ${BUNDLE_COMMIT} compose > bundle.tar"
   [ "$(git get-tar-commit-id < /tmp/bundle.tar)" = "$BUNDLE_COMMIT" ] || fail "/tmp/bundle.tar is not ${BUNDLE_COMMIT}"
   rm -rf "$BUILD_TMP"
@@ -57,7 +57,7 @@ build() {
   tar -xf /tmp/bundle.tar -C "$BUILD_TMP"
   B="$BUILD_TMP/compose"
 
-  log "3/7 Docker tuning and the data-disk guard, pointed at ${CUSTOMER_DIR} (starts Docker)"
+  log "3/8 Docker tuning and the data-disk guard, pointed at ${CUSTOMER_DIR} (starts Docker)"
   install -d -m 0755 "$CUSTOMER_DIR/scripts"
   install -m 0755 "$B/scripts/check-data-mounts.sh" "$CUSTOMER_DIR/scripts/check-data-mounts.sh"
   # COUNTLY_DEPLOY_DIR makes the drop-in carry Environment=COUNTLY_DEPLOY_DIR=$CUSTOMER_DIR and
@@ -65,11 +65,11 @@ build() {
   COUNTLY_DEPLOY_DIR="$CUSTOMER_DIR" bash "$B/scripts/provision-docker-host.sh" fine-tune
   systemctl is-active -q docker || fail "docker did not start with the new drop-in"
 
-  log "4/7 Drop every old image, container and volume"
+  log "4/8 Drop every old image, container and volume"
   docker ps -aq | xargs -r docker rm -f
   docker system prune -a --volumes -f
 
-  log "5/7 Periphery ${PERIPHERY_VERSION} in ${KOMODO_DIR} (linked, not enabled, no core, no keys)"
+  log "5/8 Periphery ${PERIPHERY_VERSION} in ${KOMODO_DIR} (linked, not enabled, no core, no keys)"
   install -d -m 0755 "$KOMODO_DIR/bin"
   install -d -m 0700 "$KOMODO_DIR/keys"
   curl -fsSL -o "$KOMODO_DIR/bin/periphery.new" \
@@ -101,14 +101,33 @@ EOF
   systemctl link "$KOMODO_DIR/periphery.service"
   systemctl daemon-reload
 
-  log "6/7 Registry access through the VM's service account (credHelpers, no stored password)"
+  log "6/8 Registry access through the VM's service account (credHelpers, no stored password)"
   command -v gcloud >/dev/null || fail "gcloud not on PATH"
   gcloud auth configure-docker gcr.io,us-docker.pkg.dev,europe-docker.pkg.dev --quiet
 
-  log "7/7 Pre-pull the ${BUNDLE_COMMIT:0:7} images"
+  log "7/8 Pre-pull the ${BUNDLE_COMMIT:0:7} images"
   grep -hE '^[A-Z_]+_IMAGE=' "$B/images.standard.env" "$B/images.app.env" | cut -d= -f2- | sort -u |
     while read -r img; do docker pull -q "$img"; done
   rm -rf "$BUILD_TMP" /tmp/bundle.tar
+
+  # MongoDB 8.x refuses kernels 6.19-7.0.13 by `uname -r` (SERVER-121912), and Ubuntu's 7.0 GCP
+  # kernel reports 7.0.0 though it carries the fix: mongo 8.3.11 (26.10.2) will not start on it.
+  # The LTS track (6.8) stays below 6.19 and keeps security updates; the HWE metapackages go, so
+  # unattended upgrades never bring a 6.17/7.x kernel back.
+  log "8/8 Ubuntu's LTS GCP kernel (6.8) instead of the HWE kernels (6.17, 7.0)"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq linux-gcp-lts-24.04 >/dev/null
+  apt-get purge -y -qq linux-gcp linux-image-gcp linux-headers-gcp >/dev/null 2>&1 || true
+  # The running kernel is one of these: answer "don't abort" to linux-base's removal question.
+  echo 'linux-base linux-base/removing-running-kernel boolean false' | debconf-set-selections
+  local hwe
+  hwe="$(dpkg-query -W -f '${Package}\n' 'linux-*' | grep -E -- '-(6\.(19|[2-9][0-9])|6\.1[7-8]|[7-9]\.[0-9]+)\.[0-9]+-[0-9]+(-gcp)?$|linux-gcp-(6\.1[7-9]|[7-9]\.[0-9]+)-' || true)"
+  [ -z "$hwe" ] || apt-get purge -y -qq $hwe >/dev/null
+  ls /boot/vmlinuz-6.8.* >/dev/null 2>&1 || fail "no 6.8 kernel in /boot"
+  # A hard reset right after this loses the unwritten /boot and grub.cfg: GRUB then boots the
+  # deleted kernel, whose modules are gone, and the data mounts and Docker fail.
+  sync
 
   log "Done. Next: cold boot (gcloud compute instances reset), then: sudo bash build-on-vm.sh check"
 }
@@ -147,6 +166,12 @@ check() {
   leftovers="$(ls -d /root/.config/gcloud /root/.viminfo /root/.bash_history /root/.lesshst /root/opt-countly-backup-* 2>/dev/null || true)"
   [ -z "$leftovers" ] && ok "no credential stores or history in /root" || no "found in /root: $(tr '\n' ' ' <<<"$leftovers")"
   systemctl is-active -q docker && ok "docker active" || no "docker not active"
+  # SERVER-121912: MongoDB 8.x refuses 6.19 <= uname -r < 7.0.14, whatever Ubuntu backported.
+  local kv
+  kv="$(uname -r)"
+  [[ "$kv" =~ ^6\.8\. ]] && ok "kernel $kv (LTS, below 6.19)" || no "kernel $kv is not the 6.8 LTS kernel"
+  ! dpkg-query -W -f '${Status}\n' linux-image-gcp 2>/dev/null | grep -q '^install ok installed' \
+    && ok "HWE metapackage linux-image-gcp absent" || no "linux-image-gcp installed (pulls 7.x kernels back)"
   # systemd prints `code=exited ; status=0 }`; the guard itself logs its deploy dir to the journal.
   # Captured first: under pipefail, `cmd | grep -q` fails when grep exits early and SIGPIPEs cmd.
   local pre jrn
