@@ -13,8 +13,9 @@ BUNDLE_COMMIT=6af83ab868c15ce30218c1c1ab4982ab2205ec5a     # main-release = 26.1
 PERIPHERY_VERSION=v2.3.3
 PERIPHERY_SHA256=40b78f377626799afad8331246a501f077d4ebcfb6d9096894cf55b64f6dcf13  # periphery-x86_64, GitHub release digest
 
-CUSTOMER_DIR=/opt/countly-2601
-KOMODO_DIR=/opt/komodo
+# One directory for everything Countly-related; data stays on the /*-data disks.
+CUSTOMER_DIR=/opt/countly
+KOMODO_DIR=/opt/countly/komodo
 BUILD_TMP=/root/komodo-base-build
 
 log()  { printf '\n==> %s\n' "$*"; }
@@ -38,6 +39,7 @@ clean_root() {
 
 build() {
   log "1/7 Remove the legacy tree, the GCR key, saved registry logins and root's leftovers"
+  # The legacy dockerized_deploy tree lives in /opt/countly too: removed here, rebuilt empty in step 3.
   systemctl stop docker.socket docker
   rm -rf /opt/countly /opt/gcr-key.json
   rm -f /root/.docker/config.json /home/*/.docker/config.json
@@ -117,9 +119,9 @@ check() {
   no()  { printf '  FAIL  %s\n' "$*"; bad=1; }
 
   log "Criteria 1-2 (after a cold boot)"
-  [ ! -e /opt/countly ]        && ok "/opt/countly absent"        || no "/opt/countly exists"
   [ ! -e /opt/gcr-key.json ]   && ok "/opt/gcr-key.json absent"   || no "/opt/gcr-key.json exists"
-  [ "$(ls -A "$CUSTOMER_DIR")" = "scripts" ] && ok "$CUSTOMER_DIR holds only scripts/" || no "$CUSTOMER_DIR: $(ls -A "$CUSTOMER_DIR" | tr '\n' ' ')"
+  # No legacy file survived: only the guard and Periphery, nothing customer-specific yet.
+  [ "$(ls -A "$CUSTOMER_DIR" | tr '\n' ' ')" = "komodo scripts " ] && ok "$CUSTOMER_DIR holds only komodo/ and scripts/" || no "$CUSTOMER_DIR: $(ls -A "$CUSTOMER_DIR" | tr '\n' ' ')"
   if python3 -c 'import json,sys; c=json.load(open("/root/.docker/config.json")); sys.exit(0 if c.get("credHelpers") and not c.get("auths") else 1)' 2>/dev/null; then
     ok "/root/.docker/config.json: credHelpers only"
   else

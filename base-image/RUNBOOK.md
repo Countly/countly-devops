@@ -42,7 +42,7 @@ git -C <compose-release clone> archive --format=tar 6af83ab868c15ce30218c1c1ab49
 gcloud compute scp --tunnel-through-iap build-on-vm.sh bundle.tar komodo-base-build:/tmp/ --zone $Z --project $P
 gcloud compute ssh komodo-base-build --zone $Z --project $P -- 'sudo install -m 700 /tmp/build-on-vm.sh /root/ && sudo bash /root/build-on-vm.sh build'
 ```
-What it does: removes `/opt/countly`, `gcr-key.json`, the saved logins and every old image. It installs Docker tuning and the guard (`/opt/countly-2601/scripts/check-data-mounts.sh`, via the bundle's own `provision-docker-host.sh` with `COUNTLY_DEPLOY_DIR=/opt/countly-2601`), and Periphery v2.3.3 in `/opt/komodo` (sha256 checked, linked, not enabled). It runs `gcloud auth configure-docker`, then pulls the 26.10.2 images.
+What it does: removes `/opt/countly`, `gcr-key.json`, the saved logins and every old image. It recreates `/opt/countly` as the single Countly directory: the guard (`/opt/countly/scripts/check-data-mounts.sh`, via the bundle's own `provision-docker-host.sh` with `COUNTLY_DEPLOY_DIR=/opt/countly`) plus Docker tuning, and Periphery v2.3.3 in `/opt/countly/komodo` (sha256 checked, linked, not enabled). It runs `gcloud auth configure-docker`, then pulls the 26.10.2 images.
 
 Expect `sha256sum: OK`, then `Done. Next: cold boot`.
 
