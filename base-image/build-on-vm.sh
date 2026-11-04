@@ -12,6 +12,9 @@ set -euo pipefail
 BUNDLE_COMMIT=6af83ab868c15ce30218c1c1ab4982ab2205ec5a     # main-release = 26.10.2
 PERIPHERY_VERSION=v2.3.3
 PERIPHERY_SHA256=40b78f377626799afad8331246a501f077d4ebcfb6d9096894cf55b64f6dcf13  # periphery-x86_64, GitHub release digest
+GCR_HELPER_VERSION=2.2.1
+GCR_HELPER_SHA256=54733a03c18f230059d89e8976518de9af16cebb74b86ccab5c95c9da66f5912  # linux_amd64 tar.gz, GitHub release digest
+REGISTRIES=gcr.io,us-docker.pkg.dev,europe-docker.pkg.dev
 
 # One directory for everything Countly-related; data stays on the /*-data disks.
 CUSTOMER_DIR=/opt/countly
@@ -101,9 +104,19 @@ EOF
   systemctl link "$KOMODO_DIR/periphery.service"
   systemctl daemon-reload
 
-  log "6/8 Registry access through the VM's service account (credHelpers, no stored password)"
-  command -v gcloud >/dev/null || fail "gcloud not on PATH"
-  gcloud auth configure-docker gcr.io,us-docker.pkg.dev,europe-docker.pkg.dev --quiet
+  # Not gcloud's helper: it is a snap, and a snap run as root joins root's user systemd manager
+  # when one is up (any SSH + sudo session). Closing that session kills the helper mid-pull
+  # ("error getting credentials - err: signal: terminated"): ignite-rehearsal-2, 2026-11-04.
+  # docker-credential-gcr is one static binary that reads the token from the metadata server.
+  log "6/8 Registry access through the VM's service account (docker-credential-gcr ${GCR_HELPER_VERSION}, no stored password)"
+  curl -fsSL -o /tmp/gcr-helper.tgz \
+    "https://github.com/GoogleCloudPlatform/docker-credential-gcr/releases/download/v${GCR_HELPER_VERSION}/docker-credential-gcr_linux_amd64-${GCR_HELPER_VERSION}.tar.gz"
+  echo "${GCR_HELPER_SHA256}  /tmp/gcr-helper.tgz" | sha256sum -c -
+  tar -xzf /tmp/gcr-helper.tgz -C /tmp docker-credential-gcr
+  install -m 0755 /tmp/docker-credential-gcr /usr/local/bin/docker-credential-gcr
+  rm -f /tmp/gcr-helper.tgz /tmp/docker-credential-gcr
+  # Writes credHelpers only (no auths) into /root/.docker/config.json.
+  docker-credential-gcr configure-docker --registries="$REGISTRIES"
 
   log "7/8 Pre-pull the ${BUNDLE_COMMIT:0:7} images"
   grep -hE '^[A-Z_]+_IMAGE=' "$B/images.standard.env" "$B/images.app.env" | cut -d= -f2- | sort -u |
@@ -141,11 +154,12 @@ check() {
   [ ! -e /opt/gcr-key.json ]   && ok "/opt/gcr-key.json absent"   || no "/opt/gcr-key.json exists"
   # No legacy file survived: only the guard and Periphery, nothing customer-specific yet.
   [ "$(ls -A "$CUSTOMER_DIR" | tr '\n' ' ')" = "komodo scripts " ] && ok "$CUSTOMER_DIR holds only komodo/ and scripts/" || no "$CUSTOMER_DIR: $(ls -A "$CUSTOMER_DIR" | tr '\n' ' ')"
-  if python3 -c 'import json,sys; c=json.load(open("/root/.docker/config.json")); sys.exit(0 if c.get("credHelpers") and not c.get("auths") else 1)' 2>/dev/null; then
-    ok "/root/.docker/config.json: credHelpers only"
+  if REGISTRIES="$REGISTRIES" python3 -c 'import json,os,sys; c=json.load(open("/root/.docker/config.json")); h=c.get("credHelpers") or {}; sys.exit(0 if not c.get("auths") and all(h.get(r)=="gcr" for r in os.environ["REGISTRIES"].split(",")) and set(h.values())=={"gcr"} else 1)' 2>/dev/null; then
+    ok "/root/.docker/config.json: credHelpers -> gcr only, no auths"
   else
-    no "/root/.docker/config.json has auths or no credHelpers"
+    no "/root/.docker/config.json has auths, or a registry not on docker-credential-gcr"
   fi
+  grep -q "${GCR_HELPER_VERSION}" <<<"$(docker-credential-gcr version 2>&1)" && ok "docker-credential-gcr ${GCR_HELPER_VERSION}" || no "docker-credential-gcr ${GCR_HELPER_VERSION} missing"
   # Names only, never contents. Where a deployer or an operator puts keys, not package or image
   # layer trees (/usr, /var/lib/docker, /var/lib/containerd, /snap carry public test fixtures).
   # /etc/ssh host keys are regenerated per VM and removed by `seal`.
