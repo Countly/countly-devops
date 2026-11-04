@@ -9,7 +9,7 @@
 # Flow (each step is recorded in the state file; --continue starts after the last one):
 #    1 reserve the static IP            7 open the countly-deployment PR
 #    2 create the VM and data disks     8 wait for the merge, sync this Server + Stack only
-#    3 wait for SSH                     9 clone the release, seed /opt/countly-2601, certificate
+#    3 wait for SSH                     9 clone the release, seed /opt/countly, certificate
 #    4 initialise the data disks       10 Deploy through Komodo, wait for /o/ping
 #    5 Cloudflare DNS                  11 admin user, demo app, api.domain
 #    6 join Komodo (one-time onboarding key, deleted straight after)
@@ -31,8 +31,8 @@ IMAGE_PREFIX=countly-docker-komodo-
 CF_ZONE_NAME=count.ly
 DEPLOY_REPO=Countly/countly-deployment
 RELEASE_REPO=Countly/compose-release
-CUSTOMER_DIR=/opt/countly-2601
-STACK_ROOT=/opt/komodo/stacks
+CUSTOMER_DIR=/opt/countly
+STACK_ROOT=/opt/countly/komodo/stacks
 # Pinned: a change on countly-devops main must not silently change provisioning.
 INIT_3DISK_URL='https://raw.githubusercontent.com/Countly/countly-devops/b0926f5923067118a5f322bd4f626d7fc0546193/snippets/prod_data_disk_initialization/init_new_arch_data_disk.sh'
 STATE_DIR=/var/log/countly-ignite
@@ -472,7 +472,7 @@ s6_komodo() {
   cat > "$f" <<EOF
 set -euo pipefail
 k="\$(cat)"
-c=/opt/komodo/periphery.config.toml
+c=/opt/countly/komodo/periphery.config.toml
 sed -i '/^core_address/d; /^connect_as/d; /^onboarding_key/d' "\$c"
 printf 'core_address = "%s"\nconnect_as = "%s"\nonboarding_key = "%s"\n' '${KOMODO_URL}' '${CUSTOMER_NAME}' "\$k" >> "\$c"
 systemctl enable --now periphery
@@ -488,7 +488,7 @@ EOF
   done
   komodo write DeleteOnboardingKey "$(jq -cn --arg p "$pub" '{public_key:$p}')" >/dev/null \
     || echo "        WARNING: could not delete the onboarding key: delete it in Komodo (Settings -> Onboarding) now."
-  vm_ssh "sudo sed -i '/^onboarding_key/d' /opt/komodo/periphery.config.toml && sudo systemctl restart periphery"
+  vm_ssh "sudo sed -i '/^onboarding_key/d' /opt/countly/komodo/periphery.config.toml && sudo systemctl restart periphery"
   [ "$state" = Ok ] || die "Server ${CUSTOMER_NAME} did not reach Ok in 3 minutes (journalctl -u periphery on the VM)"
   KOMODO_SERVER_ID="$(komodo read GetServer "$(jq -cn --arg s "$CUSTOMER_NAME" '{server:$s}')" | jq -r '._id["$oid"] // ._id // empty')"
   echo "        Server ${CUSTOMER_NAME} connected; onboarding key deleted and removed from the VM."
@@ -523,7 +523,7 @@ New Countly Docker server **${CUSTOMER_NAME}**, created by \`countly_ignite_komo
 
 Already done: the VM exists and its Periphery is connected to Komodo as Server \`${CUSTOMER_NAME}\`.
 
-After the merge, \`countly_ignite_komodo\` runs the \`customers-docker\` sync for this Server and Stack only, seeds \`/opt/countly-2601\` and deploys. No manual sync needed.
+After the merge, \`countly_ignite_komodo\` runs the \`customers-docker\` sync for this Server and Stack only, seeds \`/opt/countly\` and deploys. No manual sync needed.
 EOF
 }
 
