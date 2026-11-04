@@ -153,6 +153,9 @@ render_overrides() {
   [ -n "$LE_DOMAIN" ] && profiles="${profiles:+$profiles,}tls-letsencrypt"
   if [ "$CUSTOMER_TYPE" = prod ]; then
     printf '%s\n' MONGODB_DATA_DIR=/mongodb-data CLICKHOUSE_DATA_DIR=/clickhouse-data KAFKA_DATA_DIR=/kafka-data
+    # pre-install.sh refuses the seeded COUNTLY_DATA_DIR=./data (inside the bundle); with every
+    # store on its own disk it is unused, so drop it the way import-legacy-env.sh does.
+    echo "-COUNTLY_DATA_DIR="
   else
     printf '%s\n' COUNTLY_DATA_DIR=/data
   fi
@@ -601,6 +604,9 @@ def setkey(k, v, append):
 for l in open(ov).read().splitlines():
     if not l.strip(): continue
     k, v = l.split('=', 1)
+    if k.startswith('-'):  # -KEY= comments the key out
+        lines = ['# ' + x if re.match(r'^%s=' % re.escape(k[1:]), x) else x for x in lines]
+        continue
     setkey(k.lstrip('+'), v, k.startswith('+'))
 # Same rule as countly_ignite: no freshly generated PASSWORDSECRET (a restore would lock users out).
 lines = ['# ' + l if l.startswith('COUNTLY_CONFIG__PASSWORDSECRET=') else l for l in lines]
