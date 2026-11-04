@@ -4,11 +4,12 @@ These commands run in **your** terminal, as you. `build-on-vm.sh` needs sudo on 
 
 - Project `countly-01`, zone `europe-west1-b`.
 - Source: image `countly-enterprise-v2601-20261015`. The `new-arch-base-image` VM and its disk are never touched.
-- Result: image `countly-docker-komodo-v261002-<YYYYMMDD>`.
+- Bundle: compose-release tag `27.0.0-rc1` (`933803e`, lane `main-rc`). No branch contains it, so fetch the tags.
+- Result: image `countly-docker-komodo-v270000-rc1-<YYYYMMDD>`.
 
 ```bash
-P=countly-01; Z=europe-west1-b; D=$(date -u +%Y%m%d)
-LABELS=customer=countly,project=countly,owner=countly,application=countly,server=countly,environment=development,dataclassification=internal,vanta-owner=as,vanta-description=internal-tool-server,version=v261002,deployment=docker,os=noble
+P=countly-01; Z=europe-west1-b; D=$(date -u +%Y%m%d); IMG=countly-docker-komodo-v270000-rc1-$D
+LABELS=customer=countly,project=countly,owner=countly,application=countly,server=countly,environment=development,dataclassification=internal,vanta-owner=as,vanta-description=internal-tool-server,version=v270000,deployment=docker,os=noble
 ```
 
 ## 0. Stop the VM left running from the read
@@ -37,12 +38,13 @@ gcloud compute ssh komodo-base-build --zone $Z --project $P -- 'ls /opt; ls /opt
 ## 2. Build
 
 ```bash
-# compose-release is private: send the bundle from a local clone at the pinned commit
-git -C <compose-release clone> archive --format=tar 6af83ab868c15ce30218c1c1ab4982ab2205ec5a compose > bundle.tar
+# compose-release is private: send the bundle from a local clone at the pinned commit (tag 27.0.0-rc1)
+git -C <compose-release clone> fetch --tags origin
+git -C <compose-release clone> archive --format=tar 933803efd4d07ae8fe249e3331d45661698b4d52 compose > bundle.tar
 gcloud compute scp --tunnel-through-iap build-on-vm.sh bundle.tar komodo-base-build:/tmp/ --zone $Z --project $P
 gcloud compute ssh komodo-base-build --zone $Z --project $P -- 'sudo install -m 700 /tmp/build-on-vm.sh /root/ && sudo bash /root/build-on-vm.sh build'
 ```
-What it does: removes `/opt/countly`, `gcr-key.json`, the saved logins and every old image. It recreates `/opt/countly` as the single Countly directory: the guard (`/opt/countly/scripts/check-data-mounts.sh`, via the bundle's own `provision-docker-host.sh` with `COUNTLY_DEPLOY_DIR=/opt/countly`) plus Docker tuning, and Periphery v2.3.3 in `/opt/countly/komodo` (sha256 checked, linked, not enabled). It installs `docker-credential-gcr` 2.2.1 (sha256 checked) as the registry helper, not gcloud's snap helper, which gets killed when an SSH session closes mid-pull. Then it pulls the 26.10.2 images. Last, it moves the VM to Ubuntu's LTS GCP kernel (6.8) and removes the 6.17/7.0 HWE kernels: MongoDB 8.3.11 refuses Ubuntu's 7.0 kernel (SERVER-121912), so 26.10.2 cannot start Mongo on it.
+What it does: removes `/opt/countly`, `gcr-key.json`, the saved logins and every old image. It recreates `/opt/countly` as the single Countly directory: the guard (`/opt/countly/scripts/check-data-mounts.sh`, via the bundle's own `provision-docker-host.sh` with `COUNTLY_DEPLOY_DIR=/opt/countly`) plus Docker tuning, and Periphery v2.3.3 in `/opt/countly/komodo` (sha256 checked, linked, not enabled). It installs `docker-credential-gcr` 2.2.1 (sha256 checked) as the registry helper, not gcloud's snap helper, which gets killed when an SSH session closes mid-pull. Then it pulls the 27.0.0-rc1 images (standard flavor). Last, it moves the VM to Ubuntu's LTS GCP kernel (6.8) and removes the 6.17/7.0 HWE kernels: MongoDB 8.3.11 refuses Ubuntu's 7.0 kernel (SERVER-121912), and 27.0.0-rc1 still ships 8.3.11, so it cannot start Mongo on that kernel.
 
 Expect `sha256sum: OK`, then `Done. Next: cold boot`.
 
@@ -67,7 +69,7 @@ After sealing, **don't SSH into the VM again**. That would recreate host keys an
 ## 5. Cut the image
 
 ```bash
-gcloud compute images create countly-docker-komodo-v261002-$D --project $P \
+gcloud compute images create $IMG --project $P \
   --source-disk komodo-base-build --source-disk-zone $Z \
   --storage-location europe-west1 --labels "$LABELS"
 ```
@@ -76,10 +78,10 @@ gcloud compute images create countly-docker-komodo-v261002-$D --project $P \
 
 ```bash
 gcloud compute instances create komodo-base-test --project $P --zone $Z \
-  --image countly-docker-komodo-v261002-$D --image-project $P \
+  --image $IMG --image-project $P \
   --machine-type e2-standard-4 --network default-vpc --subnet europe-west1 --labels "$LABELS"
 gcloud compute scp --tunnel-through-iap build-on-vm.sh komodo-base-test:/tmp/ --zone $Z --project $P
-gcloud compute ssh komodo-base-test --zone $Z --project $P -- 'sudo bash /tmp/build-on-vm.sh check && sudo docker pull -q gcr.io/countly-01/countly-unified:26.10.2'
+gcloud compute ssh komodo-base-test --zone $Z --project $P -- 'sudo bash /tmp/build-on-vm.sh check && sudo docker pull -q gcr.io/countly-01/countly-unified:27.0.0-rc1'
 ```
 The last pull proves the VM's service account can pull from gcr.io with no stored password. It uses a tag that's already cached, so it's quick.
 
@@ -98,4 +100,6 @@ gcloud compute instances delete komodo-base-build komodo-base-test --zone $Z --p
 This deletes the two VMs and their boot disks. Nothing else uses them, and the image from step 5 keeps everything that matters. There's no rollback, but step 1 can always be redone.
 
 If the image turns out bad later:
-`gcloud compute images deprecate countly-docker-komodo-v261002-$D --state DEPRECATED --project $P`. Nothing uses it until the new ignite exists.
+`gcloud compute images deprecate $IMG --state DEPRECATED --project $P`. Nothing uses it until the new ignite exists.
+
+The new ignite takes the newest `countly-docker-komodo-*` image, so from step 5 on it uses this one for every release. The image only pre-pulls and sets up the host; the Stack's pinned commit decides what gets deployed.

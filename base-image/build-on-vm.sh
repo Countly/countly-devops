@@ -9,7 +9,7 @@
 # Runs ONLY on the build VM (komodo-base-build). Never on new-arch-base-image or a customer host.
 set -euo pipefail
 
-BUNDLE_COMMIT=6af83ab868c15ce30218c1c1ab4982ab2205ec5a     # main-release = 26.10.2
+BUNDLE_COMMIT=933803efd4d07ae8fe249e3331d45661698b4d52     # tag 27.0.0-rc1 (lane main-rc; on no branch)
 PERIPHERY_VERSION=v2.3.3
 PERIPHERY_SHA256=40b78f377626799afad8331246a501f077d4ebcfb6d9096894cf55b64f6dcf13  # periphery-x86_64, GitHub release digest
 GCR_HELPER_VERSION=2.2.1
@@ -124,7 +124,7 @@ EOF
   rm -rf "$BUILD_TMP" /tmp/bundle.tar
 
   # MongoDB 8.x refuses kernels 6.19-7.0.13 by `uname -r` (SERVER-121912), and Ubuntu's 7.0 GCP
-  # kernel reports 7.0.0 though it carries the fix: mongo 8.3.11 (26.10.2) will not start on it.
+  # kernel reports 7.0.0 though it carries the fix: mongo 8.3.11 (26.10.2, 27.0.0-rc1) will not start on it.
   # The LTS track (6.8) stays below 6.19 and keeps security updates; the HWE metapackages go, so
   # unattended upgrades never bring a 6.17/7.x kernel back.
   log "8/8 Ubuntu's LTS GCP kernel (6.8) instead of the HWE kernels (6.17, 7.0)"
