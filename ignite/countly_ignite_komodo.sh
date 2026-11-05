@@ -46,6 +46,7 @@ S_CF_TOKEN=ignite-cloudflare-dns-token
 S_GH_TOKEN=ignite-github-token      # fine-grained PAT: countly-deployment + compose-release, contents + pull requests write
 S_CERT_CHAIN=countly-wildcard-fullchain
 S_CERT_KEY=countly-wildcard-privkey
+S_MAIL_TOKEN=countly-postmark-smtp-token  # Postmark server token: SMTP user and password are both this value
 
 # --- Helpers -----------------------------------------------------------------
 say()  { printf '%s\n' "$*"; }
@@ -96,6 +97,12 @@ load_secrets() {
   KOMODO_SECRET="$(secret "$S_KOMODO_SECRET")"
   CF_TOKEN="$(secret "$S_CF_TOKEN")"
   GH_TOKEN="$(secret "$S_GH_TOKEN")"
+  # Used only in step 9; checked here so a missing secret stops the run before anything exists.
+  local s
+  for s in "$S_CERT_CHAIN" "$S_CERT_KEY" "$S_MAIL_TOKEN"; do
+    gcloud secrets versions describe latest --secret "$s" --project "$SECRETS_PROJECT" >/dev/null 2>&1 \
+      || die "cannot read secret $s in $SECRETS_PROJECT (exists? secretAccessor for $(gcloud config get-value account 2>/dev/null)?)"
+  done
 }
 
 # --- State file (no secrets) -------------------------------------------------
@@ -170,6 +177,11 @@ render_overrides() {
   [ -n "$API_ROOT_REDIRECT" ] && echo "API_ROOT_REDIRECT=$API_ROOT_REDIRECT"
   [ -n "$LE_ROOT_REDIRECT" ] && echo "LE_ROOT_REDIRECT=$LE_ROOT_REDIRECT"
   echo "CLUSTER_NAME=$CUSTOMER_NAME"
+  # Mail through Postmark: provider smtp with nodemailer's built-in "Postmark" service (Countly
+  # 26.10+ reads MAIL_PROVIDER; the old MAIL_TRANSPORT still maps to smtp but is undocumented).
+  # The token (AUTH_USER/AUTH_PASS) goes in separately from Secret Manager.
+  printf '%s\n' COUNTLY_CONFIG__MAIL_PROVIDER=smtp COUNTLY_CONFIG__MAIL_CONFIG_SERVICE=Postmark \
+    COUNTLY_CONFIG__MAIL_CONFIG_PORT=587 'COUNTLY_CONFIG__MAIL_STRINGS_FROM=Countly <no-reply@count.ly>'
   if [ -n "$ENABLE_OBS" ]; then
     printf '%s\n' OBS_REMOTE_WRITE_URL=https://iris.count.ly/api/v1/write \
       OBS_LOKI_URL=https://iris.count.ly/loki/api/v1/push TEMPO_OTLP_ENDPOINT=iris.count.ly:4317 OTEL_ENABLED=true
@@ -644,6 +656,25 @@ EOF
   secret "$S_CERT_CHAIN" | vm_ssh "sudo sh -c 'umask 027; cat > ${CUSTOMER_DIR}/ssl/fullchain.pem; chown root:root ${CUSTOMER_DIR}/ssl/fullchain.pem; chmod 640 ${CUSTOMER_DIR}/ssl/fullchain.pem'"
   secret "$S_CERT_KEY"   | vm_ssh "sudo sh -c 'umask 027; cat > ${CUSTOMER_DIR}/ssl/privkey.pem; chown root:root ${CUSTOMER_DIR}/ssl/privkey.pem; chmod 640 ${CUSTOMER_DIR}/ssl/privkey.pem'"
   echo "        company certificate installed (640 root:root)"
+
+  # Postmark token: Secret Manager -> stdin -> both SMTP keys in .env. The file is rewritten in place
+  # (same inode). The program travels base64-encoded so the remote shell needs no quoting.
+  local mail_py
+  mail_py="$(base64 -w0 <<PY
+import re, sys
+p = '${CUSTOMER_DIR}/.env'
+t = sys.stdin.readline().strip()
+if not t:
+    sys.exit('empty Postmark token')
+lines = open(p).read().splitlines()
+for k in ('COUNTLY_CONFIG__MAIL_CONFIG_AUTH_USER', 'COUNTLY_CONFIG__MAIL_CONFIG_AUTH_PASS'):
+    lines = [l for l in lines if not re.match(r'^%s=' % k, l)] + ['%s=%s' % (k, t)]
+open(p, 'w').write('\n'.join(lines) + '\n')
+PY
+)"
+  secret "$S_MAIL_TOKEN" | vm_ssh "sudo python3 -c \"\$(echo $mail_py | base64 -d)\"" \
+    || die "could not write the Postmark token into ${CUSTOMER_DIR}/.env"
+  echo "        mail: Postmark SMTP set (token from Secret Manager)"
 }
 
 s10_deploy() {
