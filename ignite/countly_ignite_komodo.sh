@@ -98,9 +98,10 @@ load_secrets() {
   CF_TOKEN="$(secret "$S_CF_TOKEN")"
   GH_TOKEN="$(secret "$S_GH_TOKEN")"
   # Used only in step 9; checked here so a missing secret stops the run before anything exists.
+  # `versions access` (not `describe`): secretAccessor grants reading the value, not its metadata.
   local s
   for s in "$S_CERT_CHAIN" "$S_CERT_KEY" "$S_MAIL_TOKEN"; do
-    gcloud secrets versions describe latest --secret "$s" --project "$SECRETS_PROJECT" >/dev/null 2>&1 \
+    gcloud secrets versions access latest --secret "$s" --project "$SECRETS_PROJECT" >/dev/null 2>&1 \
       || die "cannot read secret $s in $SECRETS_PROJECT (exists? secretAccessor for $(gcloud config get-value account 2>/dev/null)?)"
   done
 }
