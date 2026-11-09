@@ -4,11 +4,11 @@ These commands run in **your** terminal, as you. `build-on-vm.sh` needs sudo on 
 
 - Project `countly-01`, zone `europe-west1-b`.
 - Source: image `countly-enterprise-v2601-20261015`. The `new-arch-base-image` VM and its disk are never touched.
-- Bundle: compose-release tag `27.0.0-rc1` (`933803e`, lane `main-rc`). No branch contains it, so fetch the tags.
-- Result: image `countly-docker-komodo-v270000-rc1-<YYYYMMDD>`.
+- Bundle: compose-release `main-release` at release 27.0.0 (`c0b7461`, tag `27.0.0`).
+- Result: image `countly-docker-komodo-v270000-<YYYYMMDD>`.
 
 ```bash
-P=countly-01; Z=europe-west1-b; D=$(date -u +%Y%m%d); IMG=countly-docker-komodo-v270000-rc1-$D
+P=countly-01; Z=europe-west1-b; D=$(date -u +%Y%m%d); IMG=countly-docker-komodo-v270000-$D
 LABELS=customer=countly,project=countly,owner=countly,application=countly,server=countly,environment=development,dataclassification=internal,vanta-owner=as,vanta-description=internal-tool-server,version=v270000,deployment=docker,os=noble
 ```
 
@@ -38,13 +38,13 @@ gcloud compute ssh komodo-base-build --zone $Z --project $P -- 'ls /opt; ls /opt
 ## 2. Build
 
 ```bash
-# compose-release is private: send the bundle from a local clone at the pinned commit (tag 27.0.0-rc1)
-git -C <compose-release clone> fetch --tags origin
-git -C <compose-release clone> archive --format=tar 933803efd4d07ae8fe249e3331d45661698b4d52 compose > bundle.tar
+# compose-release is private: send the bundle from a local clone at the pinned commit (release 27.0.0)
+git -C <compose-release clone> fetch origin main-release
+git -C <compose-release clone> archive --format=tar c0b7461f60594bad646a23047d195443ebc35613 compose > bundle.tar
 gcloud compute scp --tunnel-through-iap build-on-vm.sh bundle.tar komodo-base-build:/tmp/ --zone $Z --project $P
 gcloud compute ssh komodo-base-build --zone $Z --project $P -- 'sudo install -m 700 /tmp/build-on-vm.sh /root/ && sudo bash /root/build-on-vm.sh build'
 ```
-What it does: removes `/opt/countly`, `gcr-key.json`, the saved logins and every old image. It recreates `/opt/countly` as the single Countly directory: the guard (`/opt/countly/scripts/check-data-mounts.sh`, via the bundle's own `provision-docker-host.sh` with `COUNTLY_DEPLOY_DIR=/opt/countly`) plus Docker tuning, and Periphery v2.3.3 in `/opt/countly/komodo` (sha256 checked, linked, not enabled). It installs `docker-credential-gcr` 2.2.1 (sha256 checked) as the registry helper, not gcloud's snap helper, which gets killed when an SSH session closes mid-pull. Then it pulls the 27.0.0-rc1 images (standard flavor). Last, it moves the VM to Ubuntu's LTS GCP kernel (6.8) and removes the 6.17/7.0 HWE kernels: MongoDB 8.3.11 refuses Ubuntu's 7.0 kernel (SERVER-121912), and 27.0.0-rc1 still ships 8.3.11, so it cannot start Mongo on that kernel.
+What it does: removes `/opt/countly`, `gcr-key.json`, the saved logins and every old image. It recreates `/opt/countly` as the single Countly directory: the guard (`/opt/countly/scripts/check-data-mounts.sh`, via the bundle's own `provision-docker-host.sh` with `COUNTLY_DEPLOY_DIR=/opt/countly`) plus Docker tuning, and Periphery v2.3.3 in `/opt/countly/komodo` (sha256 checked, linked, not enabled). It installs `docker-credential-gcr` 2.2.1 (sha256 checked) as the registry helper, not gcloud's snap helper, which gets killed when an SSH session closes mid-pull. Then it pulls the 27.0.0 images (standard flavor). Last, it moves the VM to Ubuntu's LTS GCP kernel (6.8) and removes the 6.17/7.0 HWE kernels: MongoDB 8.3.11 refuses Ubuntu's 7.0 kernel (SERVER-121912), and 27.0.0 still ships 8.3.11, so it cannot start Mongo on that kernel.
 
 Expect `sha256sum: OK`, then `Done. Next: cold boot`.
 
@@ -81,7 +81,7 @@ gcloud compute instances create komodo-base-test --project $P --zone $Z \
   --image $IMG --image-project $P \
   --machine-type e2-standard-4 --network default-vpc --subnet europe-west1 --labels "$LABELS"
 gcloud compute scp --tunnel-through-iap build-on-vm.sh komodo-base-test:/tmp/ --zone $Z --project $P
-gcloud compute ssh komodo-base-test --zone $Z --project $P -- 'sudo bash /tmp/build-on-vm.sh check && sudo docker pull -q gcr.io/countly-01/countly-unified:27.0.0-rc1'
+gcloud compute ssh komodo-base-test --zone $Z --project $P -- 'sudo bash /tmp/build-on-vm.sh check && sudo docker pull -q gcr.io/countly-01/countly-unified:27.0.0'
 ```
 The last pull proves the VM's service account can pull from gcr.io with no stored password. It uses a tag that's already cached, so it's quick.
 
