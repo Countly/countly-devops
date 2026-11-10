@@ -41,7 +41,7 @@ The old ignite (`sudo countly_ignite`) is separate and unchanged.
    to match a data disk you will bring from an old server.
 7. **Observability** (Alloy, node-exporter, cAdvisor to iris): Yes by default.
 8. **Flavor** = compose-release lane: standard (`main-release`), no-ai, ad (auth plugins).
-9. **Release**: latest on the lane (default), or a tag such as `27.0.0-rc1` (type it without the
+9. **Release**: latest on the lane (default), or a specific release tag (type it without the
    flavor suffix).
 10. **Let's Encrypt domain**: optional second domain. `<customer>.count.ly` always uses the
     company wildcard certificate.
@@ -86,7 +86,7 @@ All from the customer name `<c>`:
 | URL / DNS | `https://<c>.count.ly` |
 | Komodo Server and Stack | `<c>` |
 | Deploy PR | `customers-docker/<c>.toml`, branch `ignite/<c>` |
-| GCP labels | `customer`, `owner`, `project` = `<c>`; `version` = the release (27.0.0 = `v270000`) |
+| GCP labels | `customer`, `owner`, `project` = `<c>`; `version` = the release as `v<MMmmpp>` |
 | Run state and log | `/var/log/countly-ignite/<c>.state`, `/var/log/countly-ignite/<c>-<time>.log` |
 
 Typing `foo-countly` gives a VM called `foo-countly-countly`. The customer name is also the public
@@ -188,8 +188,8 @@ pgrep -af 'bash ([^ ]*/)?countly_ignite_komodo' || echo "no run in progress"
 
 ## Known limits
 
-- Tested end to end: Production, observability on and off, releases 26.10.2 and 27.0.0-rc1.
+- Tested end to end: Production, observability on and off, a lane head and a release tag.
   Not yet run: Production-Dev, a Let's Encrypt domain, restricted access.
-- MongoDB 8.3.11 (in 26.10.2 and 27.0.0) refuses Ubuntu's 7.0 kernel. The base image runs the
-  6.8 LTS kernel for that reason; keep it until compose-release ships MongoDB 8.3.14 or later.
+- The base image runs Ubuntu's LTS GCP kernel, not the newer HWE kernel: some MongoDB builds
+  refuse to start on the newer kernel (SERVER-121912). See `base-image/RUNBOOK.md`.
 - `grep: invalid option -- 'P'` during step 11 is harmless (countly.sh in the image).
