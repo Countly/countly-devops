@@ -106,6 +106,16 @@ load_secrets() {
   done
 }
 
+# --- Kafka disk ----------------------------------------------------------------
+# Kafka gets a small disk of its own, whatever size MongoDB and ClickHouse get. kafka-init sizes
+# the drill-events buffer from it on every start (scripts/kafka-drill-retention.sh in the release):
+#   per partition = 70% of the disk - the DLQ cap (+ one segment) - one 1 GiB segment
+# With the DLQ cap at 1 GiB (render_overrides), 10 GB leaves ~3.8 GiB at 1 partition and ~1.4 GiB
+# per partition at 2. The tiers with 4-6 partitions would fall under the script's 256 MiB floor,
+# and the script then leaves drill-events with no size limit, so they get 20 GB.
+# Grow the disk later when a customer needs a longer buffer.
+kafka_disk_size() { case "$TIER" in T48-192|T64-256|T80-320) echo 20 ;; *) echo 10 ;; esac; }
+
 # --- State file (no secrets) -------------------------------------------------
 STATE_VARS=(CUSTOMER_NAME CUSTOMER_TYPE PROJECT REGION ZONE MACHINE_NAME MACHINE_TYPE TIER TIER_LOWER
   DATA_DISK_SIZE MONGODB_DIRECTORYPERDB MONGODB_WIREDTIGER_DIRECTORY_FOR_INDEXES ENABLE_OBS
@@ -164,6 +174,9 @@ render_overrides() {
     # pre-install.sh refuses the seeded COUNTLY_DATA_DIR=./data (inside the bundle); with every
     # store on its own disk it is unused, so drop it the way import-legacy-env.sh does.
     echo "-COUNTLY_DATA_DIR="
+    # The DLQ's cap counts against the small Kafka disk (see kafka_disk_size); the release's
+    # 10 GiB default is more than the whole disk.
+    echo "KAFKA_DLQ_RETENTION_BYTES=1073741824"
   else
     printf '%s\n' COUNTLY_DATA_DIR=/data
   fi
@@ -269,7 +282,8 @@ else
   esac
   TIER_LOWER="$(tr '[:upper:]' '[:lower:]' <<<"$TIER")"
 
-  askQ "SSD data disk size per disk (GB)?" "10" "50" "100" "200" "500" "custom?"
+  askQ "SSD data disk size (GB)? Production: MongoDB and ClickHouse each; Kafka gets its own 10 GB (20 GB from T48-192)." \
+    "10" "50" "100" "200" "500" "custom?"
   read -r -p "    #: " a
   case "${a:0:1}" in
     2) DATA_DISK_SIZE=50 ;; 3) DATA_DISK_SIZE=100 ;; 4) DATA_DISK_SIZE=200 ;; 5) DATA_DISK_SIZE=500 ;;
@@ -390,7 +404,7 @@ if [ "$MODE" = new ]; then
   echo "  +---------------------------------------------------------------------+"
   printf "  |  Instance : %-56s|\n" "$MACHINE_NAME ($CUSTOMER_TYPE, $PROJECT, $ZONE)"
   printf "  |  Machine  : %-56s|\n" "$MACHINE_TYPE  [tier $TIER]"
-  if [ "$CUSTOMER_TYPE" = prod ]; then printf "  |  Disks    : %-56s|\n" "3 x ${DATA_DISK_SIZE} GB SSD (mongo / CH / kafka)"
+  if [ "$CUSTOMER_TYPE" = prod ]; then printf "  |  Disks    : %-56s|\n" "SSD: mongo ${DATA_DISK_SIZE} / CH ${DATA_DISK_SIZE} / kafka $(kafka_disk_size) GB"
   else printf "  |  Disks    : %-56s|\n" "1 x ${DATA_DISK_SIZE} GB SSD (combined at /data)"; fi
   printf "  |  Image    : %-56s|\n" "$IMAGE"
   printf "  |  Release  : %-56s|\n" "$LANE @ ${COMMIT:0:7} ($RELEASE, $FLAVOR)"
@@ -427,8 +441,9 @@ s2_vm() {
     --machine-type "$MACHINE_TYPE" --boot-disk-size 30GB --tags http-server,https-server
     --network default-vpc --subnet "$REGION" --address "$CUSTOMER_IP" --deletion-protection --labels "$labels")
   if [ "$CUSTOMER_TYPE" = prod ]; then
-    local d; for d in mongodb clickhouse kafka; do
-      args+=("--create-disk=name=${MACHINE_NAME}-${d}-disk,type=pd-ssd,size=${DATA_DISK_SIZE}GB,auto-delete=no,device-name=${d}-data")
+    local d size; for d in mongodb clickhouse kafka; do
+      size="$DATA_DISK_SIZE"; [ "$d" = kafka ] && size="$(kafka_disk_size)"
+      args+=("--create-disk=name=${MACHINE_NAME}-${d}-disk,type=pd-ssd,size=${size}GB,auto-delete=no,device-name=${d}-data")
     done
   else
     args+=("--create-disk=name=${MACHINE_NAME}-data-disk,type=pd-ssd,size=${DATA_DISK_SIZE}GB,auto-delete=no,device-name=data")

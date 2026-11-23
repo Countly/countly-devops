@@ -36,7 +36,9 @@ The old ignite (`sudo countly_ignite`) is separate and unchanged.
 2. **Instance type**: Production (3 data disks) or Production-Dev (1 data disk).
 3. **Region**: europe-west1 (zone b), europe-west2 (c), us-central1 (c), or any other.
 4. **Machine tier**: T4-16 ... T80-320 (vCPU-GB RAM).
-5. **Data disk size** per disk, in GB.
+5. **Data disk size** in GB: for MongoDB and ClickHouse each (Production), or the one combined
+   disk (Production-Dev). Kafka always gets its own **10 GB** disk (**20 GB** from T48-192), see
+   [Kafka disk](#kafka-disk).
 6. **MongoDB directoryPerDB / wiredTigerDirectoryForIndexes**: No for a fresh install. Yes only
    to match a data disk you will bring from an old server.
 7. **Observability** (Alloy, node-exporter, cAdvisor to iris): Yes by default.
@@ -73,6 +75,24 @@ At step 8 the run waits. Merge the PR (it needs a review like any other), and it
 itself. Ctrl-C there is safe: resume with `--continue <customer>`.
 
 The admin password is printed **once** on the terminal and never written to the log. Copy it then.
+
+## Kafka disk
+
+On Production servers Kafka has a small disk of its own: 10 GB, or 20 GB for T48-192, T64-256 and
+T80-320. Kafka is only a buffer in front of ClickHouse. kafka-init sizes the `drill-events` buffer
+from that disk on every start, per partition: 70% of the disk, less the dead-letter topic's cap and
+one 1 GiB segment. The ignite sets that cap to 1 GiB (`KAFKA_DLQ_RETENTION_BYTES=1073741824`); the
+release default of 10 GiB is more than the whole disk.
+
+| Tiers | Partitions | Kafka disk | Buffer per partition |
+|---|---|---|---|
+| T4-16 ... T16-64 | 1 | 10 GB | ~3.8 GiB |
+| T24-96, T32-128 | 2 | 10 GB | ~1.4 GiB |
+| T48-192 ... T80-320 | 4-6 | 20 GB | ~1-2 GiB |
+
+The buffer is how much traffic Kafka holds while the ClickHouse sink is down. When a customer needs
+more, grow the disk (`gcloud compute disks resize`, then `resize2fs`); the next Kafka start sizes the
+buffer from the new size.
 
 ## Naming
 
